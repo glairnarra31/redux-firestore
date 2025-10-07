@@ -3,6 +3,7 @@ import reducer from './reducer';
 import { firestoreActions } from './actions';
 import createFirestoreInstance, {
   getFirestore,
+  getFirestoreInstance,
 } from './createFirestoreInstance';
 import constants, { actionTypes } from './constants';
 import middleware, { CALL_FIRESTORE } from './middleware';
@@ -29,6 +30,7 @@ export {
   createFirestoreInstance,
   firestoreActions as actions,
   getFirestore,
+  getFirestoreInstance,
   getSnapshotByObject,
   constants,
   actionTypes,
@@ -46,6 +48,7 @@ export default {
   createFirestoreInstance,
   actions: firestoreActions,
   getFirestore,
+  getFirestoreInstance,
   getSnapshotByObject,
   constants,
   actionTypes,

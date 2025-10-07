@@ -12,6 +12,28 @@ import {
 } from 'lodash';
 import { actionTypes } from '../constants';
 
+/**
+ * Get the Firestore instance from firebase object.
+ * Supports both the old namespaced API (firebase.firestore()) and
+ * the new modular API (firebase as the firestore instance itself).
+ * @param {object} firebase - Firebase/Firestore object
+ * @returns {object} Firestore instance or null if invalid
+ */
+function getFirestoreInstance(firebase) {
+  // If firebase has a firestore method (old namespaced API or web SDK)
+  if (firebase && typeof firebase.firestore === 'function') {
+    return firebase.firestore();
+  }
+  // If firebase is the firestore instance itself (new modular API)
+  // Check for collection method as a signature of firestore instance
+  if (firebase && typeof firebase.collection === 'function') {
+    return firebase;
+  }
+  // Return null for invalid/empty objects to maintain backward compatibility
+  // The original error will be thrown when methods are called on null/undefined
+  return null;
+}
+
 export const snapshotCache = new WeakMap();
 /**
  * Get DocumentSnapshot and QuerySnapshot with object from either data or
@@ -161,7 +183,7 @@ export function firestoreRef(firebase, meta) {
     endAt,
     endBefore,
   } = meta;
-  let ref = firebase.firestore();
+  let ref = getFirestoreInstance(firebase);
   // TODO: Compare other ways of building ref
 
   if (collection && collectionGroup) {
@@ -737,7 +759,7 @@ const changeTypeToEventType = {
  * Action creator for document change event. Used to create action objects
  * to be passed to dispatch.
  * @param {object} change - Document change object from Firebase callback
- * @param {object} [originalMeta={}] - Original meta data of action
+ * @param {object} [originalMeta] - Original meta data of action
  * @returns {object} Resolves with doc change action object
  */
 function docChangeEvent(change, originalMeta = {}) {

@@ -6,6 +6,28 @@ import { defaultConfig, methodsToAddFromFirestore } from './constants';
 let firestoreInstance;
 
 /**
+ * Get the Firestore instance from firebase object.
+ * Supports both the old namespaced API (firebase.firestore()) and
+ * the new modular API (firebase as the firestore instance itself).
+ * @param {object} firebase - Firebase/Firestore object
+ * @returns {object} Firestore instance or null if invalid
+ */
+export function getFirestoreInstance(firebase) {
+  // If firebase has a firestore method (old namespaced API or web SDK)
+  if (firebase && typeof firebase.firestore === 'function') {
+    return firebase.firestore();
+  }
+  // If firebase is the firestore instance itself (new modular API)
+  // Check for collection method as a signature of firestore instance
+  if (firebase && typeof firebase.collection === 'function') {
+    return firebase;
+  }
+  // Return null for invalid/empty objects to maintain backward compatibility
+  // The original error will be thrown when methods are called on null/undefined
+  return null;
+}
+
+/**
  * Create a firebase instance that has helpers attached for dispatching actions
  * @param {object} firebase - Firebase instance which to extend
  * @param {object} configs - Configuration object
@@ -40,25 +62,35 @@ export default function createFirestoreInstance(firebase, configs, dispatch) {
     aliases,
   );
 
+  // Get the actual firestore instance
+  const actualFirestoreInstance = getFirestoreInstance(firebase);
+
   // Only include specific methods from Firestore since other methods
   // are extended (list in constants)
   const methodsFromFirestore = methodsToAddFromFirestore.reduce(
     (acc, methodName) =>
-      firebase.firestore &&
-      typeof firebase.firestore()[methodName] === 'function'
+      actualFirestoreInstance &&
+      typeof actualFirestoreInstance[methodName] === 'function'
         ? {
             ...acc,
-            [methodName]: firebase
-              .firestore()
-              [methodName].bind(firebase.firestore()),
+            [methodName]: actualFirestoreInstance[methodName].bind(
+              actualFirestoreInstance,
+            ),
           }
         : acc,
     {},
   );
 
+  // Store the firestore instance getter for internal use
+  // This allows both old and new API to work
+  const firestoreGetter =
+    typeof firebase.firestore === 'function'
+      ? firebase.firestore
+      : () => actualFirestoreInstance;
+
   firestoreInstance = Object.assign(
     methodsFromFirestore,
-    firebase.firestore,
+    firestoreGetter,
     { _: firebase._ },
     configs.helpersNamespace
       ? // Attach helpers to specified namespace

@@ -15,6 +15,28 @@ import {
 } from '../utils/query';
 
 /**
+ * Get the Firestore instance from firebase object.
+ * Supports both the old namespaced API (firebase.firestore()) and
+ * the new modular API (firebase as the firestore instance itself).
+ * @param {object} firebase - Firebase/Firestore object
+ * @returns {object} Firestore instance or null if invalid
+ */
+function getFirestoreInstance(firebase) {
+  // If firebase has a firestore method (old namespaced API or web SDK)
+  if (firebase && typeof firebase.firestore === 'function') {
+    return firebase.firestore();
+  }
+  // If firebase is the firestore instance itself (new modular API)
+  // Check for collection method as a signature of firestore instance
+  if (firebase && typeof firebase.collection === 'function') {
+    return firebase;
+  }
+  // Return null for invalid/empty objects to maintain backward compatibility
+  // The original error will be thrown when methods are called on null/undefined
+  return null;
+}
+
+/**
  * Add data to a collection or document on Cloud Firestore with the call to
  * the Firebase library being wrapped in action dispatches.
  * @param {object} firebase - Internal firebase object
@@ -397,7 +419,7 @@ export function unsetListeners(firebase, dispatch, listeners) {
  */
 export function runTransaction(firebase, dispatch, transactionPromise) {
   return wrapInDispatch(dispatch, {
-    ref: firebase.firestore(),
+    ref: getFirestoreInstance(firebase),
     method: 'runTransaction',
     args: [transactionPromise],
     types: [

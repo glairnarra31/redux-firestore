@@ -34,6 +34,10 @@ npm install --save react-redux-firebase
 
 [react-redux-firebase](https://github.com/prescottprue/react-redux-firebase) provides [`withFirestore`](http://react-redux-firebase.com/docs/api/withFirestore.html) and [`firestoreConnect`](http://react-redux-firebase.com/docs/api/firestoreConnect.html) higher order components, which handle automatically calling `redux-firestore` internally based on component's lifecycle (i.e. mounting/un-mounting)
 
+## React Native Support
+
+redux-firestore now supports both the legacy namespaced API and the new modular API introduced in React Native Firebase v22. See the [React Native Firebase guide](./docs/react-native-firebase.md) for setup instructions.
+
 # Overview
 
 - [Getting Started](./docs/getting-started.md)

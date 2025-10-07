@@ -1,6 +1,28 @@
 import { chunk, cloneDeep, flatten, mapValues } from 'lodash';
 import { firestoreRef } from './query';
 
+/**
+ * Get the Firestore instance from firebase object.
+ * Supports both the old namespaced API (firebase.firestore()) and
+ * the new modular API (firebase as the firestore instance itself).
+ * @param {object} firebase - Firebase/Firestore object
+ * @returns {object} Firestore instance or null if invalid
+ */
+function getFirestoreInstance(firebase) {
+  // If firebase has a firestore method (old namespaced API or web SDK)
+  if (firebase && typeof firebase.firestore === 'function') {
+    return firebase.firestore();
+  }
+  // If firebase is the firestore instance itself (new modular API)
+  // Check for collection method as a signature of firestore instance
+  if (firebase && typeof firebase.collection === 'function') {
+    return firebase;
+  }
+  // Return null for invalid/empty objects to maintain backward compatibility
+  // The original error will be thrown when methods are called on null/undefined
+  return null;
+}
+
 const promiseAllObject = async (object) =>
   Object.fromEntries(
     await Promise.all(
@@ -90,7 +112,8 @@ function atomize(firebase, operation) {
  */
 function write(firebase, operation = {}, writer = null) {
   const { collection, path, doc, id, data, ...rest } = operation;
-  const ref = firebase.firestore().doc(`${path || collection}/${id || doc}`);
+  const firestoreInstance = getFirestoreInstance(firebase);
+  const ref = firestoreInstance.doc(`${path || collection}/${id || doc}`);
   const [changes, requiresUpdate = false] = atomize(firebase, data || rest);
 
   if (writer) {
@@ -126,9 +149,10 @@ const MAX_BATCH_COUNT = 500;
  * @returns {Promise} Resolves with results of writing in batch
  */
 async function writeInBatch(firebase, operations) {
+  const firestoreInstance = getFirestoreInstance(firebase);
   const committedBatchesPromised = chunk(operations, MAX_BATCH_COUNT).map(
     (operationsChunk) => {
-      const batch = firebase.firestore().batch();
+      const batch = firestoreInstance.batch();
       const writesBatched = operationsChunk.map((operation) =>
         write(firebase, operation, batch),
       );
@@ -146,7 +170,8 @@ async function writeInBatch(firebase, operations) {
  * @returns {Promise} Resolves with results of running transaction
  */
 async function writeInTransaction(firebase, operations) {
-  return firebase.firestore().runTransaction(async (transaction) => {
+  const firestoreInstance = getFirestoreInstance(firebase);
+  return firestoreInstance.runTransaction(async (transaction) => {
     const serialize = (doc) =>
       !doc
         ? null
