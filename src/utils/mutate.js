@@ -1,4 +1,16 @@
 import { chunk, cloneDeep, flatten, mapValues } from 'lodash';
+import {
+  doc as firestoreDoc,
+  writeBatch,
+  runTransaction,
+  arrayUnion as firestoreArrayUnion,
+  arrayRemove as firestoreArrayRemove,
+  increment as firestoreIncrement,
+  serverTimestamp as firestoreServerTimestamp,
+  setDoc,
+  updateDoc,
+  getDocs,
+} from 'firebase/firestore';
 import { firestoreRef } from './query';
 
 /**
@@ -49,22 +61,43 @@ const primaryValue = (arr) =>
 
 const arrayUnion = (firebase, key, ...val) => {
   if (key !== '::arrayUnion') return null;
-  return firebase.firestore.FieldValue.arrayUnion(...val);
+  // Check if using namespaced API (has firestore.FieldValue)
+  if (firebase && firebase.firestore && firebase.firestore.FieldValue) {
+    return firebase.firestore.FieldValue.arrayUnion(...val);
+  }
+  return firestoreArrayUnion(...val);
 };
 
 const arrayRemove = (firebase, key, ...val) => {
   if (key !== '::arrayRemove') return null;
-  return firebase.firestore.FieldValue.arrayRemove(...val);
+  // Check if using namespaced API (has firestore.FieldValue)
+  if (firebase && firebase.firestore && firebase.firestore.FieldValue) {
+    return firebase.firestore.FieldValue.arrayRemove(...val);
+  }
+  return firestoreArrayRemove(...val);
 };
 
-const increment = (firebase, key, val) =>
-  key === '::increment' &&
-  typeof val === 'number' &&
-  firebase.firestore.FieldValue.increment(val);
+const increment = (firebase, key, val) => {
+  if (key === '::increment' && typeof val === 'number') {
+    // Check if using namespaced API (has firestore.FieldValue)
+    if (firebase && firebase.firestore && firebase.firestore.FieldValue) {
+      return firebase.firestore.FieldValue.increment(val);
+    }
+    return firestoreIncrement(val);
+  }
+  return false;
+};
 
-const serverTimestamp = (firebase, key) =>
-  key === '::serverTimestamp' &&
-  firebase.firestore.FieldValue.serverTimestamp();
+const serverTimestamp = (firebase, key) => {
+  if (key === '::serverTimestamp') {
+    // Check if using namespaced API (has firestore.FieldValue)
+    if (firebase && firebase.firestore && firebase.firestore.FieldValue) {
+      return firebase.firestore.FieldValue.serverTimestamp();
+    }
+    return firestoreServerTimestamp();
+  }
+  return false;
+};
 
 /**
  * Process Mutation to a vanilla JSON
@@ -113,7 +146,14 @@ function atomize(firebase, operation) {
 function write(firebase, operation = {}, writer = null) {
   const { collection, path, doc, id, data, ...rest } = operation;
   const firestoreInstance = getFirestoreInstance(firebase);
-  const ref = firestoreInstance.doc(`${path || collection}/${id || doc}`);
+  // Check if using namespaced API
+  const isNamespacedAPI =
+    firestoreInstance && typeof firestoreInstance.doc === 'function';
+
+  const ref = isNamespacedAPI
+    ? firestoreInstance.doc(`${path || collection}/${id || doc}`)
+    : firestoreDoc(firestoreInstance, `${path || collection}/${id || doc}`);
+
   const [changes, requiresUpdate = false] = atomize(firebase, data || rest);
 
   if (writer) {
@@ -124,11 +164,20 @@ function write(firebase, operation = {}, writer = null) {
     }
     return { id: ref.id, path: ref.parent.path, ...changes };
   }
-  if (requiresUpdate) {
-    return ref.update(changes);
+
+  // Without writer, use direct document methods
+  if (isNamespacedAPI) {
+    if (requiresUpdate) {
+      return ref.update(changes);
+    }
+    return ref.set(changes, { merge: true });
   }
 
-  return ref.set(changes, { merge: true });
+  // Modular API
+  if (requiresUpdate) {
+    return updateDoc(ref, changes);
+  }
+  return setDoc(ref, changes, { merge: true });
 }
 
 /**
@@ -150,9 +199,15 @@ const MAX_BATCH_COUNT = 500;
  */
 async function writeInBatch(firebase, operations) {
   const firestoreInstance = getFirestoreInstance(firebase);
+  // Check if using namespaced API
+  const isNamespacedAPI =
+    firestoreInstance && typeof firestoreInstance.batch === 'function';
+
   const committedBatchesPromised = chunk(operations, MAX_BATCH_COUNT).map(
     (operationsChunk) => {
-      const batch = firestoreInstance.batch();
+      const batch = isNamespacedAPI
+        ? firestoreInstance.batch()
+        : writeBatch(firestoreInstance);
       const writesBatched = operationsChunk.map((operation) =>
         write(firebase, operation, batch),
       );
@@ -171,7 +226,11 @@ async function writeInBatch(firebase, operations) {
  */
 async function writeInTransaction(firebase, operations) {
   const firestoreInstance = getFirestoreInstance(firebase);
-  return firestoreInstance.runTransaction(async (transaction) => {
+  // Check if using namespaced API
+  const isNamespacedAPI =
+    firestoreInstance && typeof firestoreInstance.runTransaction === 'function';
+
+  const transactionFn = async (transaction) => {
     const serialize = (doc) =>
       !doc
         ? null
@@ -188,7 +247,11 @@ async function writeInTransaction(firebase, operations) {
 
       // else query (As of 7/2021, Firestore doesn't include queries in client-side transactions)
       const coll = firestoreRef(firebase, read);
-      const snapshot = await coll.get();
+      // Check if collection has .get method (namespaced API)
+      const collIsNamespacedAPI = coll && typeof coll.get === 'function';
+      const snapshot = collIsNamespacedAPI
+        ? await coll.get()
+        : await getDocs(coll);
       if (hasNothing(snapshot) || snapshot.docs.length === 0) return [];
       const unserializedDocs = await Promise.all(
         snapshot.docs.map((ref) => transaction.get(ref)),
@@ -215,7 +278,12 @@ async function writeInTransaction(firebase, operations) {
     // Firestore Transaction return null.
     // Instead we'll return the results of all read data & writes.
     return { reads, writes };
-  });
+  };
+
+  if (isNamespacedAPI) {
+    return firestoreInstance.runTransaction(transactionFn);
+  }
+  return runTransaction(firestoreInstance, transactionFn);
 }
 
 /**

@@ -10,6 +10,20 @@ import {
   set,
   cloneDeep,
 } from 'lodash';
+import {
+  collection as firestoreCollection,
+  collectionGroup as firestoreCollectionGroup,
+  doc as firestoreDoc,
+  query as firestoreQuery,
+  where as firestoreWhere,
+  orderBy as firestoreOrderBy,
+  limit as firestoreLimit,
+  startAt as firestoreStartAt,
+  startAfter as firestoreStartAfter,
+  endAt as firestoreEndAt,
+  endBefore as firestoreEndBefore,
+  getDoc,
+} from 'firebase/firestore';
 import { actionTypes } from '../constants';
 
 /**
@@ -52,51 +66,6 @@ export function getSnapshotByObject(obj) {
 }
 
 /**
- * Add where claues to Cloud Firestore Reference handling invalid formats
- * and multiple where statements (array of arrays)
- * @param {firebase.firestore.Reference} ref - Reference which to add where to
- * @param {Array} where - Where statement to attach to reference
- * @returns {firebase.firestore.Reference} Reference with where statement attached
- */
-function addWhereToRef(ref, where) {
-  if (!Array.isArray(where)) {
-    throw new Error('where parameter must be an array.');
-  }
-
-  if (Array.isArray(where[0])) {
-    return where.reduce((acc, whereArgs) => addWhereToRef(acc, whereArgs), ref);
-  }
-
-  return ref.where(...where);
-}
-
-/**
- * Add attribute to Cloud Firestore Reference handling invalid formats
- * and multiple orderBy statements (array of arrays). Used for orderBy and where
- * @param {firebase.firestore.Reference} ref - Reference which to add where to
- * @param {Array} orderBy - Statement to attach to reference
- * @returns {firebase.firestore.Reference} Reference with where statement attached
- */
-function addOrderByToRef(ref, orderBy) {
-  if (
-    !Array.isArray(orderBy) &&
-    !(typeof orderBy === 'string' || orderBy instanceof String)
-  ) {
-    throw new Error('orderBy parameter must be an array or string.');
-  }
-  if (typeof orderBy === 'string' || orderBy instanceof String) {
-    return ref.orderBy(orderBy);
-  }
-  if (typeof orderBy[0] === 'string' || orderBy[0] instanceof String) {
-    return ref.orderBy(...orderBy);
-  }
-  return orderBy.reduce(
-    (acc, orderByArgs) => addOrderByToRef(acc, orderByArgs),
-    ref,
-  );
-}
-
-/**
  * Convert cursor into a string array for spreading into cursor functions
  * @see https://firebase.google.com/docs/firestore/query-data/query-cursors#set_cursor_based_on_multiple_fields
  * @param {Array|string} cursor - The cursor as a string or string array
@@ -113,10 +82,11 @@ function arrayify(cursor) {
  * to call methods to apply queryConfig
  * @param {Array} subcollectionList - List of subcollection settings from
  * queryConfig object
+ * @param {boolean} isNamespacedAPI - Whether to use namespaced API or modular API
  * @returns {firebase.firestore.Query} Query object referencing path within
  * firestore
  */
-function handleSubcollections(ref, subcollectionList) {
+function handleSubcollections(ref, subcollectionList, isNamespacedAPI) {
   if (Array.isArray(subcollectionList)) {
     subcollectionList.forEach((subcollection) => {
       /* eslint-disable no-param-reassign */
@@ -126,28 +96,118 @@ function handleSubcollections(ref, subcollectionList) {
             `Collection can only be run on a document. Check that query config for subcollection: "${subcollection.collection}" contains a doc parameter.`,
           );
         }
-        ref = ref.collection(subcollection.collection);
+        ref = isNamespacedAPI
+          ? ref.collection(subcollection.collection)
+          : firestoreCollection(ref, subcollection.collection);
       }
-      if (subcollection.id) ref = ref.doc(subcollection.id);
-      if (subcollection.doc) ref = ref.doc(subcollection.doc);
-      if (subcollection.where) ref = addWhereToRef(ref, subcollection.where);
-      if (subcollection.orderBy) {
-        ref = addOrderByToRef(ref, subcollection.orderBy);
+      if (subcollection.id) {
+        ref = isNamespacedAPI
+          ? ref.doc(subcollection.id)
+          : firestoreDoc(ref, subcollection.id);
       }
-      if (subcollection.limit) ref = ref.limit(subcollection.limit);
-      if (subcollection.startAt) {
-        ref = ref.startAt(...arrayify(subcollection.startAt));
+      if (subcollection.doc) {
+        ref = isNamespacedAPI
+          ? ref.doc(subcollection.doc)
+          : firestoreDoc(ref, subcollection.doc);
       }
-      if (subcollection.startAfter) {
-        ref = ref.startAfter(...arrayify(subcollection.startAfter));
+
+      if (isNamespacedAPI) {
+        // Use old chaining API
+        if (subcollection.where) {
+          if (Array.isArray(subcollection.where[0])) {
+            subcollection.where.forEach((whereArgs) => {
+              ref = ref.where(...whereArgs);
+            });
+          } else {
+            ref = ref.where(...subcollection.where);
+          }
+        }
+        if (subcollection.orderBy) {
+          if (Array.isArray(subcollection.orderBy[0])) {
+            subcollection.orderBy.forEach((orderByArgs) => {
+              ref = ref.orderBy(...orderByArgs);
+            });
+          } else if (
+            typeof subcollection.orderBy === 'string' ||
+            subcollection.orderBy instanceof String
+          ) {
+            ref = ref.orderBy(subcollection.orderBy);
+          } else {
+            ref = ref.orderBy(...subcollection.orderBy);
+          }
+        }
+        if (subcollection.limit) ref = ref.limit(subcollection.limit);
+        if (subcollection.startAt) {
+          ref = ref.startAt(...arrayify(subcollection.startAt));
+        }
+        if (subcollection.startAfter) {
+          ref = ref.startAfter(...arrayify(subcollection.startAfter));
+        }
+        if (subcollection.endAt) {
+          ref = ref.endAt(...arrayify(subcollection.endAt));
+        }
+        if (subcollection.endBefore) {
+          ref = ref.endBefore(...arrayify(subcollection.endBefore));
+        }
+      } else {
+        // Build query constraints for this subcollection using modular API
+        const constraints = [];
+        if (subcollection.where) {
+          if (Array.isArray(subcollection.where[0])) {
+            subcollection.where.forEach((whereArgs) =>
+              constraints.push(firestoreWhere(...whereArgs)),
+            );
+          } else {
+            constraints.push(firestoreWhere(...subcollection.where));
+          }
+        }
+        if (subcollection.orderBy) {
+          if (Array.isArray(subcollection.orderBy[0])) {
+            subcollection.orderBy.forEach((orderByArgs) =>
+              constraints.push(firestoreOrderBy(...orderByArgs)),
+            );
+          } else if (
+            typeof subcollection.orderBy === 'string' ||
+            subcollection.orderBy instanceof String
+          ) {
+            constraints.push(firestoreOrderBy(subcollection.orderBy));
+          } else {
+            constraints.push(firestoreOrderBy(...subcollection.orderBy));
+          }
+        }
+        if (subcollection.limit) {
+          constraints.push(firestoreLimit(subcollection.limit));
+        }
+        if (subcollection.startAt) {
+          constraints.push(
+            firestoreStartAt(...arrayify(subcollection.startAt)),
+          );
+        }
+        if (subcollection.startAfter) {
+          constraints.push(
+            firestoreStartAfter(...arrayify(subcollection.startAfter)),
+          );
+        }
+        if (subcollection.endAt) {
+          constraints.push(firestoreEndAt(...arrayify(subcollection.endAt)));
+        }
+        if (subcollection.endBefore) {
+          constraints.push(
+            firestoreEndBefore(...arrayify(subcollection.endBefore)),
+          );
+        }
+
+        // Apply constraints if any exist
+        if (constraints.length > 0) {
+          ref = firestoreQuery(ref, ...constraints);
+        }
       }
-      if (subcollection.endAt) {
-        ref = ref.endAt(...arrayify(subcollection.endAt));
-      }
-      if (subcollection.endBefore) {
-        ref = ref.endBefore(...arrayify(subcollection.endBefore));
-      }
-      ref = handleSubcollections(ref, subcollection.subcollections);
+
+      ref = handleSubcollections(
+        ref,
+        subcollection.subcollections,
+        isNamespacedAPI,
+      );
       /* eslint-enable */
     });
   }
@@ -194,17 +254,113 @@ export function firestoreRef(firebase, meta) {
   const { globalDataConvertor } =
     (firebase && firebase._ && firebase._.config) || {};
 
-  if (path || collection) ref = ref.collection(path || collection);
-  if (collectionGroup) ref = ref.collectionGroup(collectionGroup);
-  if (id || doc) ref = ref.doc(id || doc);
-  ref = handleSubcollections(ref, subcollections);
-  if (where) ref = addWhereToRef(ref, where);
-  if (orderBy) ref = addOrderByToRef(ref, orderBy);
-  if (limit) ref = ref.limit(limit);
-  if (startAt) ref = ref.startAt(...arrayify(startAt));
-  if (startAfter) ref = ref.startAfter(...arrayify(startAfter));
-  if (endAt) ref = ref.endAt(...arrayify(endAt));
-  if (endBefore) ref = ref.endBefore(...arrayify(endBefore));
+  // Check if using old namespaced API (has .collection or .collectionGroup method on ref)
+  const isNamespacedAPI =
+    ref &&
+    (typeof ref.collection === 'function' ||
+      typeof ref.collectionGroup === 'function');
+
+  if (path || collection) {
+    ref = isNamespacedAPI
+      ? ref.collection(path || collection)
+      : firestoreCollection(ref, path || collection);
+  }
+  if (collectionGroup) {
+    ref = isNamespacedAPI
+      ? ref.collectionGroup(collectionGroup)
+      : firestoreCollectionGroup(ref, collectionGroup);
+  }
+  if (id || doc) {
+    ref = isNamespacedAPI ? ref.doc(id || doc) : firestoreDoc(ref, id || doc);
+  }
+  ref = handleSubcollections(ref, subcollections, isNamespacedAPI);
+
+  if (isNamespacedAPI) {
+    // Use old chaining API
+    if (where) {
+      if (!Array.isArray(where)) {
+        throw new Error('where parameter must be an array.');
+      }
+      if (Array.isArray(where[0])) {
+        where.forEach((whereClause) => {
+          ref = ref.where(...whereClause);
+        });
+      } else {
+        ref = ref.where(...where);
+      }
+    }
+    if (orderBy) {
+      if (
+        !Array.isArray(orderBy) &&
+        !(typeof orderBy === 'string' || orderBy instanceof String)
+      ) {
+        throw new Error('orderBy parameter must be an array or string.');
+      }
+      if (Array.isArray(orderBy[0])) {
+        orderBy.forEach((orderByClause) => {
+          ref = ref.orderBy(...orderByClause);
+        });
+      } else if (typeof orderBy === 'string' || orderBy instanceof String) {
+        ref = ref.orderBy(orderBy);
+      } else {
+        ref = ref.orderBy(...orderBy);
+      }
+    }
+    if (limit) ref = ref.limit(limit);
+    if (startAt) ref = ref.startAt(...arrayify(startAt));
+    if (startAfter) ref = ref.startAfter(...arrayify(startAfter));
+    if (endAt) ref = ref.endAt(...arrayify(endAt));
+    if (endBefore) ref = ref.endBefore(...arrayify(endBefore));
+  } else {
+    // Use new modular API - build constraints array
+    const constraints = [];
+    if (where) {
+      if (!Array.isArray(where)) {
+        throw new Error('where parameter must be an array.');
+      }
+      if (Array.isArray(where[0])) {
+        where.forEach((whereClause) =>
+          constraints.push(firestoreWhere(...whereClause)),
+        );
+      } else {
+        constraints.push(firestoreWhere(...where));
+      }
+    }
+    if (orderBy) {
+      if (
+        !Array.isArray(orderBy) &&
+        !(typeof orderBy === 'string' || orderBy instanceof String)
+      ) {
+        throw new Error('orderBy parameter must be an array or string.');
+      }
+      if (Array.isArray(orderBy[0])) {
+        orderBy.forEach((orderByClause) =>
+          constraints.push(firestoreOrderBy(...orderByClause)),
+        );
+      } else if (typeof orderBy === 'string' || orderBy instanceof String) {
+        constraints.push(firestoreOrderBy(orderBy));
+      } else {
+        constraints.push(firestoreOrderBy(...orderBy));
+      }
+    }
+    if (limit) constraints.push(firestoreLimit(limit));
+    if (startAt) {
+      constraints.push(firestoreStartAt(...arrayify(startAt)));
+    }
+    if (startAfter) {
+      constraints.push(firestoreStartAfter(...arrayify(startAfter)));
+    }
+    if (endAt) constraints.push(firestoreEndAt(...arrayify(endAt)));
+    if (endBefore) {
+      constraints.push(firestoreEndBefore(...arrayify(endBefore)));
+    }
+
+    // Apply query constraints if any exist
+    if (constraints.length > 0) {
+      ref = firestoreQuery(ref, ...constraints);
+    }
+  }
+
   if (globalDataConvertor) ref = ref.withConverter(globalDataConvertor);
   return ref;
 }
@@ -589,9 +745,14 @@ export function dataByIdSnapshot(snap) {
  * @returns {Promise} Resolves with populate child data
  */
 function getPopulateChild(firebase, populate, id) {
-  return firestoreRef(firebase, { collection: populate.root, doc: id })
-    .get()
-    .then((snap) => ({ id, ...snap.data() }));
+  const docRef = firestoreRef(firebase, { collection: populate.root, doc: id });
+  // Check if using namespaced API (has .get method)
+  const isNamespacedAPI = docRef && typeof docRef.get === 'function';
+
+  if (isNamespacedAPI) {
+    return docRef.get().then((snap) => ({ id, ...snap.data() }));
+  }
+  return getDoc(docRef).then((snap) => ({ id, ...snap.data() }));
 }
 
 /**

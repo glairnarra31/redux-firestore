@@ -29,6 +29,7 @@ var _trim2 = _interopRequireDefault(require("lodash/trim"));
 var _isEmpty2 = _interopRequireDefault(require("lodash/isEmpty"));
 var _isNumber2 = _interopRequireDefault(require("lodash/isNumber"));
 var _isObject2 = _interopRequireDefault(require("lodash/isObject"));
+var _firestore = require("firebase/firestore");
 var _constants = require("../constants");
 var _excluded = ["path", "collection", "collectionGroup", "id", "doc", "subcollections", "storeAs"],
   _excluded2 = ["path", "collection", "collectionGroup", "subcollections"];
@@ -62,73 +63,113 @@ var snapshotCache = exports.snapshotCache = new WeakMap();
 function getSnapshotByObject(obj) {
   return snapshotCache.get(obj);
 }
-function addWhereToRef(ref, where) {
-  if (!Array.isArray(where)) {
-    throw new Error('where parameter must be an array.');
-  }
-  if (Array.isArray(where[0])) {
-    return where.reduce(function (acc, whereArgs) {
-      return addWhereToRef(acc, whereArgs);
-    }, ref);
-  }
-  return ref.where.apply(ref, _toConsumableArray(where));
-}
-function addOrderByToRef(ref, orderBy) {
-  if (!Array.isArray(orderBy) && !(typeof orderBy === 'string' || orderBy instanceof String)) {
-    throw new Error('orderBy parameter must be an array or string.');
-  }
-  if (typeof orderBy === 'string' || orderBy instanceof String) {
-    return ref.orderBy(orderBy);
-  }
-  if (typeof orderBy[0] === 'string' || orderBy[0] instanceof String) {
-    return ref.orderBy.apply(ref, _toConsumableArray(orderBy));
-  }
-  return orderBy.reduce(function (acc, orderByArgs) {
-    return addOrderByToRef(acc, orderByArgs);
-  }, ref);
-}
 function arrayify(cursor) {
   return [].concat(cursor);
 }
-function handleSubcollections(ref, subcollectionList) {
+function handleSubcollections(ref, subcollectionList, isNamespacedAPI) {
   if (Array.isArray(subcollectionList)) {
     subcollectionList.forEach(function (subcollection) {
       if (subcollection.collection) {
         if (typeof ref.collection !== 'function') {
           throw new Error("Collection can only be run on a document. Check that query config for subcollection: \"".concat(subcollection.collection, "\" contains a doc parameter."));
         }
-        ref = ref.collection(subcollection.collection);
+        ref = isNamespacedAPI ? ref.collection(subcollection.collection) : (0, _firestore.collection)(ref, subcollection.collection);
       }
-      if (subcollection.id) ref = ref.doc(subcollection.id);
-      if (subcollection.doc) ref = ref.doc(subcollection.doc);
-      if (subcollection.where) ref = addWhereToRef(ref, subcollection.where);
-      if (subcollection.orderBy) {
-        ref = addOrderByToRef(ref, subcollection.orderBy);
+      if (subcollection.id) {
+        ref = isNamespacedAPI ? ref.doc(subcollection.id) : (0, _firestore.doc)(ref, subcollection.id);
       }
-      if (subcollection.limit) ref = ref.limit(subcollection.limit);
-      if (subcollection.startAt) {
-        var _ref;
-        ref = (_ref = ref).startAt.apply(_ref, _toConsumableArray(arrayify(subcollection.startAt)));
+      if (subcollection.doc) {
+        ref = isNamespacedAPI ? ref.doc(subcollection.doc) : (0, _firestore.doc)(ref, subcollection.doc);
       }
-      if (subcollection.startAfter) {
-        var _ref2;
-        ref = (_ref2 = ref).startAfter.apply(_ref2, _toConsumableArray(arrayify(subcollection.startAfter)));
+      if (isNamespacedAPI) {
+        if (subcollection.where) {
+          if (Array.isArray(subcollection.where[0])) {
+            subcollection.where.forEach(function (whereArgs) {
+              var _ref;
+              ref = (_ref = ref).where.apply(_ref, _toConsumableArray(whereArgs));
+            });
+          } else {
+            var _ref2;
+            ref = (_ref2 = ref).where.apply(_ref2, _toConsumableArray(subcollection.where));
+          }
+        }
+        if (subcollection.orderBy) {
+          if (Array.isArray(subcollection.orderBy[0])) {
+            subcollection.orderBy.forEach(function (orderByArgs) {
+              var _ref3;
+              ref = (_ref3 = ref).orderBy.apply(_ref3, _toConsumableArray(orderByArgs));
+            });
+          } else if (typeof subcollection.orderBy === 'string' || subcollection.orderBy instanceof String) {
+            ref = ref.orderBy(subcollection.orderBy);
+          } else {
+            var _ref4;
+            ref = (_ref4 = ref).orderBy.apply(_ref4, _toConsumableArray(subcollection.orderBy));
+          }
+        }
+        if (subcollection.limit) ref = ref.limit(subcollection.limit);
+        if (subcollection.startAt) {
+          var _ref5;
+          ref = (_ref5 = ref).startAt.apply(_ref5, _toConsumableArray(arrayify(subcollection.startAt)));
+        }
+        if (subcollection.startAfter) {
+          var _ref6;
+          ref = (_ref6 = ref).startAfter.apply(_ref6, _toConsumableArray(arrayify(subcollection.startAfter)));
+        }
+        if (subcollection.endAt) {
+          var _ref7;
+          ref = (_ref7 = ref).endAt.apply(_ref7, _toConsumableArray(arrayify(subcollection.endAt)));
+        }
+        if (subcollection.endBefore) {
+          var _ref8;
+          ref = (_ref8 = ref).endBefore.apply(_ref8, _toConsumableArray(arrayify(subcollection.endBefore)));
+        }
+      } else {
+        var constraints = [];
+        if (subcollection.where) {
+          if (Array.isArray(subcollection.where[0])) {
+            subcollection.where.forEach(function (whereArgs) {
+              return constraints.push(_firestore.where.apply(void 0, _toConsumableArray(whereArgs)));
+            });
+          } else {
+            constraints.push(_firestore.where.apply(void 0, _toConsumableArray(subcollection.where)));
+          }
+        }
+        if (subcollection.orderBy) {
+          if (Array.isArray(subcollection.orderBy[0])) {
+            subcollection.orderBy.forEach(function (orderByArgs) {
+              return constraints.push(_firestore.orderBy.apply(void 0, _toConsumableArray(orderByArgs)));
+            });
+          } else if (typeof subcollection.orderBy === 'string' || subcollection.orderBy instanceof String) {
+            constraints.push((0, _firestore.orderBy)(subcollection.orderBy));
+          } else {
+            constraints.push(_firestore.orderBy.apply(void 0, _toConsumableArray(subcollection.orderBy)));
+          }
+        }
+        if (subcollection.limit) {
+          constraints.push((0, _firestore.limit)(subcollection.limit));
+        }
+        if (subcollection.startAt) {
+          constraints.push(_firestore.startAt.apply(void 0, _toConsumableArray(arrayify(subcollection.startAt))));
+        }
+        if (subcollection.startAfter) {
+          constraints.push(_firestore.startAfter.apply(void 0, _toConsumableArray(arrayify(subcollection.startAfter))));
+        }
+        if (subcollection.endAt) {
+          constraints.push(_firestore.endAt.apply(void 0, _toConsumableArray(arrayify(subcollection.endAt))));
+        }
+        if (subcollection.endBefore) {
+          constraints.push(_firestore.endBefore.apply(void 0, _toConsumableArray(arrayify(subcollection.endBefore))));
+        }
+        if (constraints.length > 0) {
+          ref = _firestore.query.apply(void 0, [ref].concat(constraints));
+        }
       }
-      if (subcollection.endAt) {
-        var _ref3;
-        ref = (_ref3 = ref).endAt.apply(_ref3, _toConsumableArray(arrayify(subcollection.endAt)));
-      }
-      if (subcollection.endBefore) {
-        var _ref4;
-        ref = (_ref4 = ref).endBefore.apply(_ref4, _toConsumableArray(arrayify(subcollection.endBefore)));
-      }
-      ref = handleSubcollections(ref, subcollection.subcollections);
+      ref = handleSubcollections(ref, subcollection.subcollections, isNamespacedAPI);
     });
   }
   return ref;
 }
 function firestoreRef(firebase, meta) {
-  var _ref6, _ref7, _ref8, _ref9;
   if (!firebase.firestore) {
     throw new Error('Firestore must be required and initalized.');
   }
@@ -149,19 +190,99 @@ function firestoreRef(firebase, meta) {
   if (collection && collectionGroup) {
     throw new Error('Reference cannot contain both Collection and CollectionGroup.');
   }
-  var _ref5 = firebase && firebase._ && firebase._.config || {},
-    globalDataConvertor = _ref5.globalDataConvertor;
-  if (path || collection) ref = ref.collection(path || collection);
-  if (collectionGroup) ref = ref.collectionGroup(collectionGroup);
-  if (id || doc) ref = ref.doc(id || doc);
-  ref = handleSubcollections(ref, subcollections);
-  if (where) ref = addWhereToRef(ref, where);
-  if (orderBy) ref = addOrderByToRef(ref, orderBy);
-  if (limit) ref = ref.limit(limit);
-  if (startAt) ref = (_ref6 = ref).startAt.apply(_ref6, _toConsumableArray(arrayify(startAt)));
-  if (startAfter) ref = (_ref7 = ref).startAfter.apply(_ref7, _toConsumableArray(arrayify(startAfter)));
-  if (endAt) ref = (_ref8 = ref).endAt.apply(_ref8, _toConsumableArray(arrayify(endAt)));
-  if (endBefore) ref = (_ref9 = ref).endBefore.apply(_ref9, _toConsumableArray(arrayify(endBefore)));
+  var _ref9 = firebase && firebase._ && firebase._.config || {},
+    globalDataConvertor = _ref9.globalDataConvertor;
+  var isNamespacedAPI = ref && (typeof ref.collection === 'function' || typeof ref.collectionGroup === 'function');
+  if (path || collection) {
+    ref = isNamespacedAPI ? ref.collection(path || collection) : (0, _firestore.collection)(ref, path || collection);
+  }
+  if (collectionGroup) {
+    ref = isNamespacedAPI ? ref.collectionGroup(collectionGroup) : (0, _firestore.collectionGroup)(ref, collectionGroup);
+  }
+  if (id || doc) {
+    ref = isNamespacedAPI ? ref.doc(id || doc) : (0, _firestore.doc)(ref, id || doc);
+  }
+  ref = handleSubcollections(ref, subcollections, isNamespacedAPI);
+  if (isNamespacedAPI) {
+    var _ref12, _ref13, _ref14, _ref15;
+    if (where) {
+      if (!Array.isArray(where)) {
+        throw new Error('where parameter must be an array.');
+      }
+      if (Array.isArray(where[0])) {
+        where.forEach(function (whereClause) {
+          var _ref0;
+          ref = (_ref0 = ref).where.apply(_ref0, _toConsumableArray(whereClause));
+        });
+      } else {
+        var _ref1;
+        ref = (_ref1 = ref).where.apply(_ref1, _toConsumableArray(where));
+      }
+    }
+    if (orderBy) {
+      if (!Array.isArray(orderBy) && !(typeof orderBy === 'string' || orderBy instanceof String)) {
+        throw new Error('orderBy parameter must be an array or string.');
+      }
+      if (Array.isArray(orderBy[0])) {
+        orderBy.forEach(function (orderByClause) {
+          var _ref10;
+          ref = (_ref10 = ref).orderBy.apply(_ref10, _toConsumableArray(orderByClause));
+        });
+      } else if (typeof orderBy === 'string' || orderBy instanceof String) {
+        ref = ref.orderBy(orderBy);
+      } else {
+        var _ref11;
+        ref = (_ref11 = ref).orderBy.apply(_ref11, _toConsumableArray(orderBy));
+      }
+    }
+    if (limit) ref = ref.limit(limit);
+    if (startAt) ref = (_ref12 = ref).startAt.apply(_ref12, _toConsumableArray(arrayify(startAt)));
+    if (startAfter) ref = (_ref13 = ref).startAfter.apply(_ref13, _toConsumableArray(arrayify(startAfter)));
+    if (endAt) ref = (_ref14 = ref).endAt.apply(_ref14, _toConsumableArray(arrayify(endAt)));
+    if (endBefore) ref = (_ref15 = ref).endBefore.apply(_ref15, _toConsumableArray(arrayify(endBefore)));
+  } else {
+    var constraints = [];
+    if (where) {
+      if (!Array.isArray(where)) {
+        throw new Error('where parameter must be an array.');
+      }
+      if (Array.isArray(where[0])) {
+        where.forEach(function (whereClause) {
+          return constraints.push(_firestore.where.apply(void 0, _toConsumableArray(whereClause)));
+        });
+      } else {
+        constraints.push(_firestore.where.apply(void 0, _toConsumableArray(where)));
+      }
+    }
+    if (orderBy) {
+      if (!Array.isArray(orderBy) && !(typeof orderBy === 'string' || orderBy instanceof String)) {
+        throw new Error('orderBy parameter must be an array or string.');
+      }
+      if (Array.isArray(orderBy[0])) {
+        orderBy.forEach(function (orderByClause) {
+          return constraints.push(_firestore.orderBy.apply(void 0, _toConsumableArray(orderByClause)));
+        });
+      } else if (typeof orderBy === 'string' || orderBy instanceof String) {
+        constraints.push((0, _firestore.orderBy)(orderBy));
+      } else {
+        constraints.push(_firestore.orderBy.apply(void 0, _toConsumableArray(orderBy)));
+      }
+    }
+    if (limit) constraints.push((0, _firestore.limit)(limit));
+    if (startAt) {
+      constraints.push(_firestore.startAt.apply(void 0, _toConsumableArray(arrayify(startAt))));
+    }
+    if (startAfter) {
+      constraints.push(_firestore.startAfter.apply(void 0, _toConsumableArray(arrayify(startAfter))));
+    }
+    if (endAt) constraints.push(_firestore.endAt.apply(void 0, _toConsumableArray(arrayify(endAt))));
+    if (endBefore) {
+      constraints.push(_firestore.endBefore.apply(void 0, _toConsumableArray(arrayify(endBefore))));
+    }
+    if (constraints.length > 0) {
+      ref = _firestore.query.apply(void 0, [ref].concat(constraints));
+    }
+  }
   if (globalDataConvertor) ref = ref.withConverter(globalDataConvertor);
   return ref;
 }
@@ -291,8 +412,8 @@ function detachListener(firebase, dispatch, meta) {
     firebase._.listeners[name]();
     delete firebase._.listeners[name];
   }
-  var _ref0 = firebase._.config || {},
-    preserveCache = _ref0.preserveCacheAfterUnset;
+  var _ref16 = firebase._.config || {},
+    preserveCache = _ref16.preserveCacheAfterUnset;
   dispatch({
     type: _constants.actionTypes.UNSET_LISTENER,
     meta: meta,
@@ -404,10 +525,19 @@ function dataByIdSnapshot(snap) {
   return null;
 }
 function getPopulateChild(firebase, populate, id) {
-  return firestoreRef(firebase, {
+  var docRef = firestoreRef(firebase, {
     collection: populate.root,
     doc: id
-  }).get().then(function (snap) {
+  });
+  var isNamespacedAPI = docRef && typeof docRef.get === 'function';
+  if (isNamespacedAPI) {
+    return docRef.get().then(function (snap) {
+      return _objectSpread({
+        id: id
+      }, snap.data());
+    });
+  }
+  return (0, _firestore.getDoc)(docRef).then(function (snap) {
     return _objectSpread({
       id: id
     }, snap.data());
@@ -523,16 +653,16 @@ function docChangeEvent(change) {
     }
   };
 }
-function dispatchListenerResponse(_ref1) {
+function dispatchListenerResponse(_ref17) {
   var _docData$metadata;
-  var dispatch = _ref1.dispatch,
-    docData = _ref1.docData,
-    meta = _ref1.meta,
-    firebase = _ref1.firebase;
-  var _ref10 = firebase._.config || {},
-    mergeOrdered = _ref10.mergeOrdered,
-    mergeOrderedDocUpdates = _ref10.mergeOrderedDocUpdates,
-    mergeOrderedCollectionUpdates = _ref10.mergeOrderedCollectionUpdates;
+  var dispatch = _ref17.dispatch,
+    docData = _ref17.docData,
+    meta = _ref17.meta,
+    firebase = _ref17.firebase;
+  var _ref18 = firebase._.config || {},
+    mergeOrdered = _ref18.mergeOrdered,
+    mergeOrderedDocUpdates = _ref18.mergeOrderedDocUpdates,
+    mergeOrderedCollectionUpdates = _ref18.mergeOrderedCollectionUpdates;
   var fromCache = typeof ((_docData$metadata = docData.metadata) === null || _docData$metadata === void 0 ? void 0 : _docData$metadata.fromCache) === 'boolean' ? docData.metadata.fromCache : true;
   var docChanges = typeof docData.docChanges === 'function' ? docData.docChanges() : docData.docChanges;
   if (docChanges && docChanges.length < docData.size) {
@@ -558,10 +688,10 @@ function dispatchListenerResponse(_ref1) {
     });
   }
 }
-function getPopulateActions(_ref11) {
-  var firebase = _ref11.firebase,
-    docData = _ref11.docData,
-    meta = _ref11.meta;
+function getPopulateActions(_ref19) {
+  var firebase = _ref19.firebase,
+    docData = _ref19.docData,
+    meta = _ref19.meta;
   return promisesForPopulate(firebase, docData.id, dataByIdSnapshot(docData), meta.populates).then(function (populateResults) {
     return (Object.keys(populateResults).map(function (resultKey) {
         return {
